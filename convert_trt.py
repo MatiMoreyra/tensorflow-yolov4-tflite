@@ -12,28 +12,35 @@ from tensorflow.python.saved_model import signature_constants
 import os
 from tensorflow.compat.v1 import ConfigProto
 from tensorflow.compat.v1 import InteractiveSession
+import base64
 
 flags.DEFINE_string('weights', './checkpoints/yolov4-416', 'path to weights file')
 flags.DEFINE_string('output', './checkpoints/yolov4-trt-fp16-416', 'path to output')
-flags.DEFINE_integer('input_size', 416, 'path to output')
+flags.DEFINE_integer('input_size', 512, 'path to output')
 flags.DEFINE_string('quantize_mode', 'float16', 'quantize mode (int8, float16)')
-flags.DEFINE_string('dataset', "/media/user/Source/Data/coco_dataset/coco/5k.txt", 'path to dataset')
+flags.DEFINE_string('dataset', "../_dataset/images/index.txt", 'path to dataset')
 flags.DEFINE_integer('loop', 8, 'loop')
+flags.DEFINE_boolean('base64', True, 'base64')
 
 def representative_data_gen():
+  # yield (tf.random.normal((1, 512, 512, 3)),)
   fimage = open(FLAGS.dataset).read().split()
-  batched_input = np.zeros((FLAGS.loop, FLAGS.input_size, FLAGS.input_size, 3), dtype=np.float32)
+  if FLAGS.base64:
+    batched_input = np.zeros((FLAGS.loop, 1), dtype=np.chararray)
+  else:
+    batched_input = np.zeros((FLAGS.loop, FLAGS.input_size, FLAGS.input_size, 3), dtype=np.float32)
   for input_value in range(FLAGS.loop):
     if os.path.exists(fimage[input_value]):
       original_image=cv2.imread(fimage[input_value])
       original_image = cv2.cvtColor(original_image, cv2.COLOR_BGR2RGB)
-      image_data = utils.image_preporcess(np.copy(original_image), [FLAGS.input_size, FLAGS.input_size])
+      image_data = utils.image_preprocess(np.copy(original_image), [FLAGS.input_size, FLAGS.input_size])
       img_in = image_data[np.newaxis, ...].astype(np.float32)
-      batched_input[input_value, :] = img_in
-      # batched_input = tf.constant(img_in)
-      print(input_value)
-      # yield (batched_input, )
-      # yield tf.random.normal((1, 416, 416, 3)),
+      if FLAGS.base64:
+        encoded = base64.urlsafe_b64encode(cv2.imencode(".jpeg", image_data)[1]).decode("utf-8")
+        batched_input[input_value, :] = [encoded]
+      else:
+        batched_input[input_value, :] = img_in
+      print("representative_data_gen iteration ", input_value)
     else:
       continue
   batched_input = tf.constant(batched_input)
@@ -45,8 +52,7 @@ def save_trt():
     conversion_params = trt.DEFAULT_TRT_CONVERSION_PARAMS._replace(
       precision_mode=trt.TrtPrecisionMode.INT8,
       max_workspace_size_bytes=4000000000,
-      use_calibration=True,
-      max_batch_size=8)
+      use_calibration=True)
     converter = trt.TrtGraphConverterV2(
       input_saved_model_dir=FLAGS.weights,
       conversion_params=conversion_params)
@@ -54,21 +60,19 @@ def save_trt():
   elif FLAGS.quantize_mode == 'float16':
     conversion_params = trt.DEFAULT_TRT_CONVERSION_PARAMS._replace(
       precision_mode=trt.TrtPrecisionMode.FP16,
-      max_workspace_size_bytes=4000000000,
-      max_batch_size=8)
+      max_workspace_size_bytes=4000000000)
     converter = trt.TrtGraphConverterV2(
       input_saved_model_dir=FLAGS.weights, conversion_params=conversion_params)
     converter.convert()
   else :
     conversion_params = trt.DEFAULT_TRT_CONVERSION_PARAMS._replace(
       precision_mode=trt.TrtPrecisionMode.FP32,
-      max_workspace_size_bytes=4000000000,
-      max_batch_size=8)
+      max_workspace_size_bytes=4000000000)
     converter = trt.TrtGraphConverterV2(
       input_saved_model_dir=FLAGS.weights, conversion_params=conversion_params)
     converter.convert()
 
-  # converter.build(input_fn=representative_data_gen)
+  converter.build(input_fn=representative_data_gen)
   converter.save(output_saved_model_dir=FLAGS.output)
   print('Done Converting to TF-TRT')
 
