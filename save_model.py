@@ -4,6 +4,7 @@ from absl.flags import FLAGS
 from core.yolov4 import YOLO, decode, filter_boxes
 import core.utils as utils
 from core.config import cfg
+from tensorflow.keras.layers import Input, Lambda
 
 flags.DEFINE_string('weights', './data/yolov4.weights', 'path to weights file')
 flags.DEFINE_string('output', './checkpoints/yolov4-416', 'path to output')
@@ -12,6 +13,13 @@ flags.DEFINE_integer('input_size', 416, 'define input size of export model')
 flags.DEFINE_float('score_thres', 0.2, 'define score threshold')
 flags.DEFINE_string('framework', 'tf', 'define what framework do you want to convert (tf, trt, tflite)')
 flags.DEFINE_string('model', 'yolov4', 'yolov3 or yolov4')
+
+def preprocess_and_decode(img_str, new_shape=[416, 416]):
+    img = tf.io.decode_base64(img_str)
+    img = tf.image.decode_jpeg(img, channels=3)
+    img = tf.image.resize(
+        img, new_shape, method=tf.image.ResizeMethod.BILINEAR) / 255
+    return img
 
 def save_tf():
   STRIDES, ANCHORS, NUM_CLASS, XYSCALE = utils.load_config(FLAGS)
@@ -48,7 +56,20 @@ def save_tf():
   model = tf.keras.Model(input_layer, pred)
   utils.load_weights(model, FLAGS.weights, FLAGS.model, FLAGS.tiny)
   model.summary()
+  utils.freeze_all(model, True)
   model.save(FLAGS.output)
+
+  # Save a version with base64 encoded jpeg input.
+  # This improves requests performance when served with TF Serving.
+  InputLayer = Input(shape=(1,), dtype="string")
+  OutputLayer = Lambda(lambda img: tf.map_fn(
+      lambda im: preprocess_and_decode(im[0], [FLAGS.input_size, FLAGS.input_size]), img, dtype="float32"))(InputLayer)
+  base64_decoder_model = tf.keras.Model(InputLayer, OutputLayer)
+  base64_input = base64_decoder_model.input
+  output = model(base64_decoder_model.output)
+  new_model = tf.keras.Model(base64_input, output)
+  new_model.save(FLAGS.output + "-base64")
+
 
 def main(_argv):
   save_tf()
