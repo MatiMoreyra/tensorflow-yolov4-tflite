@@ -12,34 +12,24 @@ from tensorflow.python.saved_model import signature_constants
 import os
 from tensorflow.compat.v1 import ConfigProto
 from tensorflow.compat.v1 import InteractiveSession
-import base64
 
 flags.DEFINE_string('weights', './_checkpoints/yolov4-416', 'path to weights file')
 flags.DEFINE_string('output', './_checkpoints/yolov4-trt-fp16-416', 'path to output')
 flags.DEFINE_integer('input_size', 512, 'path to output')
 flags.DEFINE_string('quantize_mode', 'float16', 'quantize mode (int8, float16)')
-flags.DEFINE_string('dataset', "../_dataset/images/index.txt", 'path to dataset')
+flags.DEFINE_string('dataset', "../../_dataset/images/index.txt", 'path to dataset')
 flags.DEFINE_integer('loop', 8, 'loop')
-flags.DEFINE_boolean('base64', True, 'base64')
 
 def representative_data_gen():
-  # yield (tf.random.normal((1, 512, 512, 3)),)
   fimage = open(FLAGS.dataset).read().split()
-  if FLAGS.base64:
-    batched_input = np.zeros((FLAGS.loop, 1), dtype=np.chararray)
-  else:
-    batched_input = np.zeros((FLAGS.loop, FLAGS.input_size, FLAGS.input_size, 3), dtype=np.float32)
+  batched_input = np.zeros((FLAGS.loop, FLAGS.input_size, FLAGS.input_size, 3), dtype=np.float32)
   for input_value in range(FLAGS.loop):
     if os.path.exists(fimage[input_value]):
       original_image=cv2.imread(fimage[input_value])
       original_image = cv2.cvtColor(original_image, cv2.COLOR_BGR2RGB)
       image_data = utils.image_preprocess(np.copy(original_image), [FLAGS.input_size, FLAGS.input_size])
       img_in = image_data[np.newaxis, ...].astype(np.float32)
-      if FLAGS.base64:
-        encoded = base64.urlsafe_b64encode(cv2.imencode(".jpeg", image_data)[1]).decode("utf-8")
-        batched_input[input_value, :] = [encoded]
-      else:
-        batched_input[input_value, :] = img_in
+      batched_input[input_value, :] = img_in
       print("representative_data_gen iteration ", input_value)
     else:
       continue
